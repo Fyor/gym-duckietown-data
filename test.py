@@ -152,7 +152,7 @@ class Agent():
         return action
 
     def load_param(self):
-        self.net.load_state_dict(torch.load('param/ppo_net_params_small_loops4.pkl'))
+        self.net.load_state_dict(torch.load('param/ppo_net_params_check_straight_defaults.pkl'))
 
 DUCKIETOWN = True
 
@@ -171,12 +171,13 @@ if __name__ == "__main__":
         for t in range(1000):
             action = agent.select_action(state)
             if DUCKIETOWN:
-                state_, reward, done, info = env.step(action * np.array([2., 1.]) + np.array([-1., 0.]))
+                action[0] = 0.1  # Fixed speed
+                state_, reward, done, info = env.step(action * np.array([1., 2.]) + np.array([0., -1.]))
             else:
                 state_, reward, done, info = env.step(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
             if args.render:
                 env.render()
-                time.sleep(1/40)
+                time.sleep(1/20)
             score += reward
             state = state_
             if done:

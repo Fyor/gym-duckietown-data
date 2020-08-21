@@ -1,5 +1,6 @@
 import argparse
 import os
+from collections import defaultdict
 
 import numpy as np
 
@@ -18,25 +19,28 @@ import shutil
 
 maplist = "4way  loop_dyn_duckiebots  loop_empty  loop_obstacles  loop_pedestrians  regress_4way_adam  regress_4way_drivable  small_loop_cw  small_loop  straight_road  straight_turn  udem1  zigzag_dists"
 
-
-parser = argparse.ArgumentParser(description='Train a PPO agent for the CarRacing-v0', epilog="Available maps:\n" + maplist)
+parser = argparse.ArgumentParser(description='Train a PPO agent for the CarRacing-v0',
+                                 epilog="Available maps:\n" + maplist)
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G', help='discount factor (default: 0.99)')
-parser.add_argument('--L2', type=float, default=1e-3, help='L2 regularisation factor')
+parser.add_argument('--L2', type=float, default=0, help='L2 regularisation factor (1e-3 way too high, think 1e-6)')
 parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-parser.add_argument('--action-repeat', type=int, default=8, metavar='N', help='repeat action in N frames (default: 8)')
+parser.add_argument('--action-repeat', type=int, default=8, metavar='N',
+                    help='repeat action in N frames (default: 4 used to be 8)')
 parser.add_argument('--episode-length', type=int, default=500, metavar='N',
                     help='maximum steps per episode (old default: 1000)')
 parser.add_argument('--img-stack', type=int, default=4, metavar='N', help='stack N image in a state (default: 4)')
-parser.add_argument('--seed', type=int, default=0, metavar='N', help='random seed (default: 0)')
+parser.add_argument('--seed', type=int, default=0, help='random seed (default: 0)')
+parser.add_argument('--buffer-size', type=int, default=2000, help='replay buffer capacity (default: 2000)')
+parser.add_argument('--batch-size', type=int, default=128, help='batch size (default: 128)')
 parser.add_argument('--render', action='store_true', help='render the environment')
 parser.add_argument('--checkpoint', action='store_true', help='Continue from last model')
 parser.add_argument('--vis', action='store_true', help='plot with visdom')
 parser.add_argument("--force", action="store_true", help="overwrite name")
+parser.add_argument("--domain-rand", action="store_true", help="Enable domain randomisation")
 parser.add_argument(
-        '--log-interval', type=int, default=10, metavar='N', help='interval between training status logs (default: 10)')
+    '--log-interval', type=int, default=10, metavar='N', help='interval between training status logs (default: 10)')
 # parser.add_argument('--maps', nargs='+', help='Maps to use', default=["loop_empty"])
-parser.add_argument('--maps', nargs='+', help='Maps to use', default=["loop_empty"])
-
+parser.add_argument('--maps', nargs='+', help='Maps to use', default=["zigzag_dists"])
 
 if __name__ == '__main__':
     parser.add_argument("name", type=str, help="Experiment name")
@@ -49,13 +53,19 @@ torch.manual_seed(args.seed)
 if use_cuda:
     torch.cuda.manual_seed(args.seed)
 
+
 def get_tensorboard(args):
     logdir_base = "logs"
+    if args.name == "test":
+        logdir_base = "/tmp/tensorboard"
+
     logdir = logdir_base + "/" + args.name + "/"
 
-
     if args.force:
-        shutil.rmtree(logdir)
+        try:
+            shutil.rmtree(logdir)
+        except FileNotFoundError as e:
+            pass
 
     if not os.path.exists(logdir_base):
         os.mkdir(logdir_base)
@@ -68,12 +78,13 @@ def get_tensorboard(args):
     writer.add_text("Info", str(vars(args)))
     return writer
 
+
 class DtRewardWrapper(gym.RewardWrapper):
     def __init__(self, env):
         super(DtRewardWrapper, self).__init__(env)
 
     def reward(self, reward):
-        if reward == -1000:
+        if reward < -10:
             reward = -10
         elif reward > 0:
             reward += 10
@@ -83,12 +94,13 @@ class DtRewardWrapper(gym.RewardWrapper):
         return reward
 
 
-
 DUCKIETOWN = True
 
 action_shape = (2,) if DUCKIETOWN else (3,)
-transition = np.dtype([('s', np.float64, (args.img_stack, 96, 96)), ('a', np.float64, action_shape), ('a_logp', np.float64),
-                       ('r', np.float64), ('s_', np.float64, (args.img_stack, 96, 96))])
+transition = np.dtype(
+    [('s', np.float64, (args.img_stack, 96, 96)), ('a', np.float64, action_shape), ('a_logp', np.float64),
+     ('r', np.float64), ('s_', np.float64, (args.img_stack, 96, 96))])
+
 
 class Env():
     """
@@ -97,20 +109,24 @@ class Env():
 
     def __init__(self):
         # self.env = gym.make('CarRacing-v0')
-        env = DuckietownRewardFunc(
-            seed=args.seed, # random seed
+        env = DuckietownEnv(
+            seed=args.seed,  # random seed
             map_name=args.maps[0],
-            max_steps=500001, # we don't want the gym to reset itself
-            domain_rand=0,
+            max_steps=500001,  # we don't want the gym to reset itself
+            domain_rand=args.domain_rand,
             camera_width=96,
             camera_height=96,
-            accept_start_angle_deg=4, # start close to straight
+            accept_start_angle_deg=4,  # start close to straight
             full_transparency=True,
             randomize_maps_on_reset=len(args.maps) > 1,
-            )
+            camera_FOV_y=108
+        )
+
+        args.__setattr__("Env", type(env))
 
         # limit maps
         env.map_names = args.maps
+        env.reset()
 
         assert (type(env) == DuckietownEnv or issubclass(type(env), DuckietownEnv)) == DUCKIETOWN
         env = DtRewardWrapper(env)
@@ -132,23 +148,21 @@ class Env():
     def step(self, action):
         total_reward = 0
         for i in range(args.action_repeat):
-            img_rgb, reward, die, info = self.env.step(action)
+            img_rgb, reward, done, info = self.env.step(action)
             if not DUCKIETOWN:
                 # don't penalize "die state"
-                if die:
+                if done:
                     reward += 100
                 # green penalty
                 if np.mean(img_rgb[:, :, 1]) > 185.0:
                     reward -= 0.05
             total_reward += reward
             # if no reward recently, end the episode
-            done = die
-            if self.av_r(reward) <= -0.1:
-                done = True
-                info['Simulator']['msg'] += "Too little reward"
+            # if self.av_r(reward) <= -0.1:
+            #     done = True
+            #     info['Simulator']['msg'] += "Too little reward"
 
             if done:
-                # print("death:", info['Simulator']['msg'])
                 break
         img_gray = self.rgb2gray(img_rgb)
         self.stack.pop(0)
@@ -236,7 +250,7 @@ class Agent():
     max_grad_norm = 0.5
     clip_param = 0.1  # epsilon in clipped loss
     ppo_epoch = 10
-    buffer_capacity, batch_size = 2000, 128
+    buffer_capacity, batch_size = args.buffer_size, args.batch_size  # 2000, 128
 
     def __init__(self):
         self.training_step = 0
@@ -244,8 +258,10 @@ class Agent():
         self.buffer = np.empty(self.buffer_capacity, dtype=transition)
         self.counter = 0
 
-        self.optimizer = optim.Adam(self.net.parameters(), lr=args.lr, weight_decay=args.L2) # L2 weight_decay=1e-5 and from paper 5e-3
-        self.best_reward = 0
+        self.optimizer = optim.Adam(self.net.parameters(), lr=args.lr,
+                                    weight_decay=args.L2, # L2 weight_decay=1e-5 and from paper 5e-3
+                                    )
+        self.best_reward = -np.inf
 
     def select_action(self, state):
         state = torch.from_numpy(state).double().to(device).unsqueeze(0)
@@ -254,6 +270,9 @@ class Agent():
         dist = Beta(alpha, beta)
         action = dist.sample()
         a_logp = dist.log_prob(action).sum(dim=1)
+
+        if torch.isnan(torch.sum(action)):
+            raise ValueError("Predicion includes NaN")
 
         action = action.squeeze().cpu().numpy()
         a_logp = a_logp.item()
@@ -264,9 +283,9 @@ class Agent():
             self.best_reward = last_reward
             torch.save(self.net.state_dict(), f'param/ppo_net_params_{args.name}.pkl')
 
-
     def load_param(self):
-        self.net.load_state_dict(torch.load(f'param/ppo_net_params_base.pkl'))
+        # self.net.load_state_dict(torch.load(f'param/ppo_net_params_base.pkl'))
+        self.net.load_state_dict(torch.load(f'param/checkpoint.pkl'))
 
     def store(self, transition):
         self.buffer[self.counter] = transition
@@ -295,7 +314,6 @@ class Agent():
 
         for _ in range(self.ppo_epoch):
             for index in BatchSampler(SubsetRandomSampler(range(self.buffer_capacity)), self.batch_size, False):
-
                 alpha, beta = self.net(s[index])[0]
                 dist = Beta(alpha, beta)
                 a_logp = dist.log_prob(a[index]).sum(dim=1, keepdim=True)
@@ -313,30 +331,29 @@ class Agent():
                 nn.utils.clip_grad_norm_(self.net.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
-stuck = 0
-invalid_pose = 0
-timestep_limit = 0
-def log_info(writer, info, i_ep):
-    global stuck, invalid_pose, timestep_limit
 
-    reason = info['Simulator']['msg']
-    if "Stuck in same place" == reason:
-        stuck += 1
+class DeathLogger:
+    def __init__(self, writer):
+        self.death_counter = defaultdict(int, {"invalid-pose": 0, "max-steps-reached": 0})
+        self.writer = writer
 
-    if "Stopping the simulator because we are at an invalid pose." == reason:
-        invalid_pose += 1
+    def log(self, info, i_ep):
+        ### done_code options
+        # invalid-pose
+        # max-steps-reached
+        # in-progress
+        # stuck
 
-    if "End" == reason:
-        timestep_limit += 1
+        reason = info['Simulator']['done_code']
+        if reason == "in-progress":
+            raise ValueError("Simulator is done but gave no reason", info)
+        self.death_counter[reason] += 1
 
+        if i_ep % args.log_interval == 0:
+            for cause, count in self.death_counter.items():
+                writer.add_scalar(f"Deaths/{cause}", count / args.log_interval, i_ep)
+                self.death_counter[cause] = 0
 
-    if i_ep % args.log_interval == 0:
-        writer.add_scalar("Deaths/stuck", stuck / args.log_interval, i_ep)
-        writer.add_scalar("Deaths/invalid_pose", invalid_pose / args.log_interval, i_ep)
-        writer.add_scalar("Deaths/timestep_limit", timestep_limit / args.log_interval, i_ep)
-
-        stuck = 0
-        invalid_pose = 0
 
 if __name__ == "__main__":
     # Next training changes:
@@ -354,26 +371,40 @@ if __name__ == "__main__":
 
     env = Env()
     if args.vis:
-        draw_reward = DrawLine(env="car", title="PPO" + args.name, xlabel="Episode", ylabel="Moving averaged episode reward")
+        draw_reward = DrawLine(env="car", title="PPO" + args.name, xlabel="Episode",
+                               ylabel="Moving averaged episode reward")
 
     writer = get_tensorboard(args)
+    death_logger = DeathLogger(writer=writer)
 
     training_records = []
     running_score = 0
-    scores = np.zeros((1,args.log_interval))
+    reward_dist = np.zeros((1, args.log_interval))
+    checkpoint_counter = np.zeros((1, args.log_interval))
+    timesteps_counter = np.zeros((1, args.log_interval))
     state = env.reset()
+
     for i_ep in range(100000):
         score = 0
         state = env.reset()
 
+        t = 0
+        reward = 0
+        action_history = np.zeros((1, args.episode_length, 2))
         for t in range(args.episode_length):
             action, a_logp = agent.select_action(state)
             if DUCKIETOWN:
-                state_, reward, done, info = env.step(action * np.array([2., 1.]) + np.array([-1., 0.]))
+                action[0] = 0.1  # Fixed speed
+                # action[1] += np.random.normal(0, 0.1)
+                # action = action.clip(0,1)
+                # action_history[0,t] = action
+                state_, reward, done, info = env.step(action * np.array([1., 2.]) + np.array([0, -1]))
             else:
                 state_, reward, done, info = env.step(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
             if args.render:
                 env.render()
+                # print(F"Reward {reward:7.1f}", "Death", info['Simulator']['done_code'])
+
             if agent.store((state, action, a_logp, reward, state_)):
                 print('updating')
                 agent.update()
@@ -382,19 +413,31 @@ if __name__ == "__main__":
             if done:
                 break
         else:
-            info['Simulator']['msg'] = "End"
+            info['Simulator']['done_code'] = "max-steps-reached"
+
         running_score = running_score * 0.99 + score * 0.01
-        scores[0, i_ep % args.log_interval] = score
-        log_info(writer, info, i_ep)
+        reward_dist[0, i_ep % args.log_interval] = reward
+        if isinstance(env.env.unwrapped, DuckietownRewardFunc):
+            checkpoint_counter[0, i_ep % args.log_interval] = env.env.unwrapped.checkpoint_counter
+        timesteps_counter[0, i_ep % args.log_interval] = t
+        death_logger.log(info, i_ep)
 
         if i_ep % args.log_interval == 0:
             if args.vis:
                 draw_reward(xdata=i_ep, ydata=running_score)
             print('Ep {}\tLast score: {:.2f}\tMoving average score: {:.2f}'.format(i_ep, score, running_score))
+
             writer.add_scalar('Reward/reward', running_score, i_ep)
-            writer.add_histogram('Reward/reward_dist', scores, i_ep)
+
+            writer.add_histogram('Timesteps/timesteps', timesteps_counter, i_ep)
+            if isinstance(env.env.unwrapped, DuckietownRewardFunc):
+                writer.add_histogram('Reward/checkpoints', checkpoint_counter, i_ep)
+            writer.add_histogram('Reward/reward_dist', reward_dist, i_ep)
+            # only add actions which arent zero, in case
+            # dirs = action_history[:, 1]
+            # writer.add_histogram('Actions/last_actions_dist_vel', dirs[dirs != 0], i_ep)
+
             agent.save_param(running_score)
         if running_score > env.reward_threshold:
             print("Solved! Running reward is now {} and the last episode runs to {}!".format(running_score, score))
             break
-
