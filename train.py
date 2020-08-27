@@ -32,6 +32,7 @@ parser.add_argument('--img-stack', type=int, default=4, metavar='N', help='stack
 parser.add_argument('--seed', type=int, default=0, help='random seed (default: 0)')
 parser.add_argument('--buffer-size', type=int, default=2000, help='replay buffer capacity (default: 2000)')
 parser.add_argument('--batch-size', type=int, default=128, help='batch size (default: 128)')
+parser.add_argument('--fixed-speed', type=float, default=.1, help='Fixed velocity, 0 for disable (default: .1)')
 parser.add_argument('--render', action='store_true', help='render the environment')
 parser.add_argument('--checkpoint', action='store_true', help='Continue from last model')
 parser.add_argument('--vis', action='store_true', help='plot with visdom')
@@ -226,6 +227,9 @@ class Net(nn.Module):
         self.beta_head = nn.Sequential(nn.Linear(100, out), nn.Softplus())
         self.apply(self._weights_init)
 
+        self.i = 0
+        self.latent_spaces = np.zeros((5, 256))
+
     @staticmethod
     def _weights_init(m):
         if isinstance(m, nn.Conv2d):
@@ -235,6 +239,14 @@ class Net(nn.Module):
     def forward(self, x):
         x = self.cnn_base(x)
         x = x.view(-1, 256)
+
+        # self.latent_spaces[self.i % len(self.latent_spaces)] = x
+        # self.i+= 1
+        # if self.i>5:
+        #     variance = np.var(self.latent_spaces, axis=0)
+        #     variance_sum = np.sum(variance)
+        #     print("Variance sum", variance_sum)
+
         v = self.v(x)
         x = self.fc(x)
         alpha = self.alpha_head(x) + 1
@@ -394,7 +406,8 @@ if __name__ == "__main__":
         for t in range(args.episode_length):
             action, a_logp = agent.select_action(state)
             if DUCKIETOWN:
-                action[0] = 0.1  # Fixed speed
+                if args.fixed_speed != 0:
+                    action[0] = args.fixed_speed  # Fixed speed
                 # action[1] += np.random.normal(0, 0.1)
                 # action = action.clip(0,1)
                 # action_history[0,t] = action
