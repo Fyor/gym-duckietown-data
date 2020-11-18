@@ -1,1 +1,1 @@
- rsync -avzP  --exclude "param/" * twiggers@146.50.28.206:~/xtma_racecar_2/pytorch_car_caring/
+ rsync -avzP  --exclude "param/" --exclude "param_ray/" * twiggers@146.50.28.206:~/xtma_racecar_2/pytorch_car_caring/
