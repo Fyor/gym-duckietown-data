@@ -19,16 +19,15 @@ from utils import Display
 ray.init()
 
 agent = PPOTrainer(config={"env": DuckieTownHistoryEnv,
-              "framework": "torch",
-              "model": {
-                  "custom_model": VisionNetwork,
-              },
-            "num_workers": 0,
-            "num_gpus": 0,
-            })
+                           "framework": "torch",
+                           "model": {
+                               "custom_model": VisionNetwork,
+                           },
+                           "num_workers": 0,
+                           "num_gpus": 0,
+                           })
 i = 9
 agent.restore(f"param_ray/checkpoint_{i}0/checkpoint-{i}0")
-
 
 env = DuckieTownHistoryEnv({})
 # display = Display()
@@ -51,6 +50,7 @@ for i_ep in range(500):
         print(action)
         # veldir
         # action[0] = .3  # 0.3 or 0.1 # Fixed speed
+        # action[1] *= -1
         # action = action * np.array([1., 2.]) + np.array([0., -1.])
         # lr power
         # action = velangle_to_lrpower(action)

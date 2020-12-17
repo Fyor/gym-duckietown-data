@@ -1,7 +1,9 @@
 import argparse
 import os
+import time
 from collections import defaultdict
 
+import cv2
 import numpy as np
 
 import gym
@@ -9,12 +11,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from gym_duckietown.envs.duckietown_env import DuckietownForward
+from gym_duckietown.simulator import Simulator
 from torch.distributions import Beta
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 from torch.utils.tensorboard import SummaryWriter
 
-from utils import DrawLine
-from gym_duckietown.envs import DuckietownEnv, DuckietownForward, DuckietownRewardFunc
+from utils import DrawLine, velangle_to_lrpower
+from gym_duckietown.envs import DuckietownEnv  # , DuckietownForward, DuckietownRewardFunc
 import shutil
 
 maplist = "4way  loop_dyn_duckiebots  loop_empty  loop_obstacles  loop_pedestrians  regress_4way_adam  regress_4way_drivable  small_loop_cw  small_loop  straight_road  straight_turn  udem1  zigzag_dists"
@@ -32,7 +36,10 @@ parser.add_argument('--img-stack', type=int, default=4, metavar='N', help='stack
 parser.add_argument('--seed', type=int, default=0, help='random seed (default: 0)')
 parser.add_argument('--buffer-size', type=int, default=2000, help='replay buffer capacity (default: 2000)')
 parser.add_argument('--batch-size', type=int, default=128, help='batch size (default: 128)')
-parser.add_argument('--fixed-speed', type=float, default=.1, help='Fixed velocity, 0 for disable (default: .1)')
+parser.add_argument('--fixed-speed', type=float, default=0,
+                    help='Fixed velocity, 0 for disable (default: .1) BROKEN WITH LR POWER')
+parser.add_argument('--speed-discount', type=float, default=1, help='Multiplied with velocity')
+parser.add_argument('--speed-boost', type=float, default=0, help='speed addded to reward')
 parser.add_argument('--render', action='store_true', help='render the environment')
 parser.add_argument('--checkpoint', action='store_true', help='Continue from last model')
 parser.add_argument('--vis', action='store_true', help='plot with visdom')
@@ -42,6 +49,7 @@ parser.add_argument(
     '--log-interval', type=int, default=10, metavar='N', help='interval between training status logs (default: 10)')
 # parser.add_argument('--maps', nargs='+', help='Maps to use', default=["loop_empty"])
 parser.add_argument('--maps', nargs='+', help='Maps to use', default=["zigzag_dists"])
+parser.add_argument("--desc", type=str, default="", help="Experiment description")
 
 if __name__ == '__main__':
     parser.add_argument("name", type=str, help="Experiment name")
@@ -95,6 +103,17 @@ class DtRewardWrapper(gym.RewardWrapper):
         return reward
 
 
+class DtRewardWrapper2(gym.RewardWrapper):
+    """ REALLY BAD """
+    def __init__(self, env):
+        super().__init__(env)
+
+    def reward(self, reward):
+        if reward < -100:
+            reward = -100
+
+        return reward
+
 DUCKIETOWN = True
 
 action_shape = (2,) if DUCKIETOWN else (3,)
@@ -103,38 +122,46 @@ transition = np.dtype(
      ('r', np.float64), ('s_', np.float64, (args.img_stack, 96, 96))])
 
 
-class Env():
+class DuckietownHistoryEnvNormal():
     """
     Environment wrapper for CarRacing 
     """
 
-    def __init__(self):
+    def __init__(self, maps, action_repeat=args.action_repeat, seed=args.seed):
         # self.env = gym.make('CarRacing-v0')
-        env = DuckietownEnv(
-            seed=args.seed,  # random seed
-            map_name=args.maps[0],
+        rand = args.domain_rand
+        # rand = True
+        env = Simulator(
+            seed=seed,  # random seed
+            map_name=maps[0],
             max_steps=500001,  # we don't want the gym to reset itself
-            domain_rand=args.domain_rand,
-            camera_width=96,
-            camera_height=96,
-            accept_start_angle_deg=4,  # start close to straight
+            domain_rand=rand,
+            # camera_width=96, DONE IN GRAY TO FIX BUG
+            # camera_height=96,
+            accept_start_angle_deg=10,  # start close to straight
             full_transparency=True,
-            randomize_maps_on_reset=len(args.maps) > 1,
-            camera_FOV_y=108
+            randomize_maps_on_reset=len(maps) > 1,
+            # camera_FOV_y=108
+            distortion=True,
         )
-
-        args.__setattr__("Env", type(env))
+        self.action_repeat = action_repeat
+        # log the type of enviroment the experiment is running on
+        args.__setattr__("DuckietownHistoryEnvNormal", type(env))
 
         # limit maps
-        env.map_names = args.maps
+        env.map_names = maps
         env.reset()
 
-        assert (type(env) == DuckietownEnv or issubclass(type(env), DuckietownEnv)) == DUCKIETOWN
+        # assert (type(env) == DuckietownEnv or issubclass(type(env), DuckietownEnv)) == DUCKIETOWN
         env = DtRewardWrapper(env)
         self.env = env
 
         # self.reward_threshold = self.env.spec.reward_threshold
         self.reward_threshold = 100_000
+
+        # episodic trackers
+        self.score = 0
+        self.punishment = 0
 
     def reset(self):
         self.counter = 0
@@ -148,23 +175,29 @@ class Env():
 
     def step(self, action):
         total_reward = 0
-        for i in range(args.action_repeat):
+        for i in range(self.action_repeat):
             img_rgb, reward, done, info = self.env.step(action)
-            if not DUCKIETOWN:
-                # don't penalize "die state"
-                if done:
-                    reward += 100
-                # green penalty
-                if np.mean(img_rgb[:, :, 1]) > 185.0:
-                    reward -= 0.05
+
+
+
             total_reward += reward
-            # if no reward recently, end the episode
-            # if self.av_r(reward) <= -0.1:
-            #     done = True
-            #     info['Simulator']['msg'] += "Too little reward"
+            self.punishment += info.get("dist_punish", 0)
 
             if done:
                 break
+
+        # speed_sign = 1
+        # if all(action < 0):
+        #     speed_sign = -1
+        # total_reward += info["Simulator"]["robot_speed"]
+        # total_reward += 10 * np.sum(action)
+
+        self.score += total_reward
+
+        if done:
+            print("Reward", self.score, "punishment", self.punishment)
+            self.score = self.punishment = 0
+
         img_gray = self.rgb2gray(img_rgb)
         self.stack.pop(0)
         self.stack.append(img_gray)
@@ -181,6 +214,7 @@ class Env():
         if norm:
             # normalize
             gray = gray / 128. - 1.
+        gray = cv2.resize(gray, dsize=(96, 96))
         return gray
 
     @staticmethod
@@ -227,8 +261,37 @@ class Net(nn.Module):
         self.beta_head = nn.Sequential(nn.Linear(100, out), nn.Softplus())
         self.apply(self._weights_init)
 
-        self.i = 0
-        self.latent_spaces = np.zeros((5, 256))
+        # self.i = 0
+        # self.latent_spaces = np.zeros((5, 256))
+
+        # print("LOADING PRETRAINED WEIGHTS")
+        # path = "/home/twiggers/xtma_racecar_2/pytorch_car_caring/ppo_net_params_zigzag.pkl"
+        # if os.getlogin() == "thomas":  # on laptop
+        #     path = "ppo_net_params_zigzag.pkl"
+        # self.load_cnn_base_state_dict(path)
+
+    def load_cnn_base_state_dict(self, path):
+        state_dict = torch.load(path, map_location=device)
+        own_state = self.state_dict()
+        i = 0
+        for name, param in state_dict.items():
+            if name not in own_state:
+                continue
+
+            if "cnn_base" not in name:
+                print("Skipping", name)
+                continue
+
+            if isinstance(param, torch.nn.Parameter):
+                # backwards compatibility for serialized parameters
+                param = param.data
+            print("loaded weigths for", name)
+            i += 1
+            own_state[name].copy_(param)
+
+        if i == 0:
+            print("Own model:", own_state.keys())
+            raise ValueError(f"No weights were loaded from {state_dict.keys()}")
 
     @staticmethod
     def _weights_init(m):
@@ -271,7 +334,7 @@ class Agent():
         self.counter = 0
 
         self.optimizer = optim.Adam(self.net.parameters(), lr=args.lr,
-                                    weight_decay=args.L2, # L2 weight_decay=1e-5 and from paper 5e-3
+                                    weight_decay=args.L2,  # L2 weight_decay=1e-5 and from paper 5e-3
                                     )
         self.best_reward = -np.inf
 
@@ -381,13 +444,13 @@ if __name__ == "__main__":
         print("Using pretrained weights")
         agent.load_param()
 
-    env = Env()
-    if args.vis:
-        draw_reward = DrawLine(env="car", title="PPO" + args.name, xlabel="Episode",
-                               ylabel="Moving averaged episode reward")
+    env = DuckietownHistoryEnvNormal(args.maps)
 
     writer = get_tensorboard(args)
-    death_logger = DeathLogger(writer=writer)
+
+    # s = torch.tensor(env.reset(), dtype=torch.double).to(device).unsqueeze(0)
+    # writer.add_graph(agent.net, input_to_model=s, verbose=True)
+    # writer.flush()
 
     training_records = []
     running_score = 0
@@ -395,6 +458,8 @@ if __name__ == "__main__":
     checkpoint_counter = np.zeros((1, args.log_interval))
     timesteps_counter = np.zeros((1, args.log_interval))
     state = env.reset()
+
+    nan_counter = 0
 
     for i_ep in range(100000):
         score = 0
@@ -404,21 +469,24 @@ if __name__ == "__main__":
         reward = 0
         action_history = np.zeros((1, args.episode_length, 2))
         for t in range(args.episode_length):
-            action, a_logp = agent.select_action(state)
-            if DUCKIETOWN:
-                if args.fixed_speed != 0:
-                    action[0] = args.fixed_speed  # Fixed speed
-                # action[1] += np.random.normal(0, 0.1)
-                # action = action.clip(0,1)
-                # action_history[0,t] = action
-                state_, reward, done, info = env.step(action * np.array([1., 2.]) + np.array([0, -1]))
-            else:
-                state_, reward, done, info = env.step(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
+            action_, a_logp = agent.select_action(state)
+            action = action_
+            # action = action * np.array([1, 2.]) + np.array([0, -1])
+            action = action * 2 - 1
+            # action *= args.speed_discount
+
+            # action[0] = max(action[0], .1) # fixed velocity
+            action[0] = max(.5 - np.abs(action[1]), .1)
+
+            action = velangle_to_lrpower(action)
+
+
+            state_, reward, done, info = env.step(action)
             if args.render:
                 env.render()
                 # print(F"Reward {reward:7.1f}", "Death", info['Simulator']['done_code'])
 
-            if agent.store((state, action, a_logp, reward, state_)):
+            if agent.store((state, action_, a_logp, reward, state_)):
                 print('updating')
                 agent.update()
             score += reward
@@ -430,21 +498,18 @@ if __name__ == "__main__":
 
         running_score = running_score * 0.99 + score * 0.01
         reward_dist[0, i_ep % args.log_interval] = reward
-        if isinstance(env.env.unwrapped, DuckietownRewardFunc):
-            checkpoint_counter[0, i_ep % args.log_interval] = env.env.unwrapped.checkpoint_counter
+
         timesteps_counter[0, i_ep % args.log_interval] = t
-        death_logger.log(info, i_ep)
 
         if i_ep % args.log_interval == 0:
-            if args.vis:
-                draw_reward(xdata=i_ep, ydata=running_score)
             print('Ep {}\tLast score: {:.2f}\tMoving average score: {:.2f}'.format(i_ep, score, running_score))
 
             writer.add_scalar('Reward/reward', running_score, i_ep)
+            writer.add_scalar('Reward/reward_score', score, i_ep)
+            writer.add_scalar('Reward/reward_recent_mean', np.mean(reward_dist), i_ep)
+            writer.add_scalar('Timesteps/timesteps2', float(np.mean(timesteps_counter)), i_ep)
 
             writer.add_histogram('Timesteps/timesteps', timesteps_counter, i_ep)
-            if isinstance(env.env.unwrapped, DuckietownRewardFunc):
-                writer.add_histogram('Reward/checkpoints', checkpoint_counter, i_ep)
             writer.add_histogram('Reward/reward_dist', reward_dist, i_ep)
             # only add actions which arent zero, in case
             # dirs = action_history[:, 1]

@@ -1,5 +1,8 @@
+import os
+
 import cv2
 import ray
+from gym_duckietown.simulator import Simulator
 from ray import tune
 from ray.rllib.agents.ppo import PPOTrainer
 
@@ -10,34 +13,6 @@ import numpy as np
 import gym
 
 
-def velangle_to_lrpower(action, gain=1.0, trim=0.0, radius=0.0318, k=27.0, limit=1.0):
-    vel, angle = action
-
-    # Distance between the wheels
-    baseline = 0.102
-
-    # assuming same motor constants k for both motors
-    k_r = k
-    k_l = k
-
-    # adjusting k by gain and trim
-    k_r_inv = (gain + trim) / k_r
-    k_l_inv = (gain - trim) / k_l
-
-    omega_r = (vel + 0.5 * angle * baseline) / radius
-    omega_l = (vel - 0.5 * angle * baseline) / radius
-
-    # conversion from motor rotation rate to duty cycle
-    u_r = omega_r * k_r_inv
-    u_l = omega_l * k_l_inv
-
-    # limiting output to limit, which is 1.0 for the duckiebot
-    u_r_limited = max(min(u_r, limit), -limit)
-    u_l_limited = max(min(u_l, limit), -limit)
-
-    vels = np.array([u_l_limited, u_r_limited])
-
-    return vels
 
 class DtRewardWrapper(gym.RewardWrapper):
     def __init__(self, env):
@@ -108,6 +83,10 @@ class DuckieTownHistoryEnv(gym.Env):
         return np.array(self.stack)
 
     def step(self, action):
+
+        action = np.array(action)
+        action[0] = .1 # SET FIXED VELOCITY TODO TEST
+
         total_reward = 0
         for i in range(self.action_repeat):
             img_rgb, reward, done, info = self.env.step(action)
@@ -122,6 +101,8 @@ class DuckieTownHistoryEnv(gym.Env):
         img_gray = self.rgb2gray(img_rgb)
         self.stack.pop(0)
         self.stack.append(img_gray)
+        if os.getlogin() == "thomas" and __name__ == "__main__":
+            self.env.render()
         assert len(self.stack) == self.img_stack
         return np.array(self.stack), total_reward, done, info
 
@@ -154,6 +135,35 @@ class DuckieTownHistoryEnv(gym.Env):
 
         return memory
 
+if __name__ == '__main__' and os.getlogin() == "thomas":
+    ray.init()
+
+    agent = PPOTrainer(config={"env": DuckieTownHistoryEnv,
+                               "framework": "torch",
+                               "model": {
+                                   # Extra kwargs to be passed to your model's c'tor.
+                                   # "custom_model_config": {
+                                   #     "fcnet_hiddens": [512, 512, 512, 256, ],
+                                   #     "fcnet_activation": "relu",
+                                   # },
+                                   "custom_model": VisionNetwork,
+                               },
+                               "num_workers": 3,
+                               "num_gpus": .1,
+                               "lr": 1e-3,  # tune.grid_search([1e-2, 1e-4, 1e-6]),
+                               "train_batch_size": 2000,
+                               "rollout_fragment_length": 400,
+                               "sgd_minibatch_size": 128,  # tune.grid_search([32, 64, 128])
+                               "num_sgd_iter": 10,
+                               "clip_param": 0.1,
+                               "grad_clip": .5,
+                               }, )
+
+    i = 9
+    agent.restore(f"param_ray/checkpoint_{i}0/checkpoint-{i}0")
+    agent.train()
+
+
 if __name__ == '__main__':
 
     ray.init()
@@ -161,11 +171,6 @@ if __name__ == '__main__':
                       config={"env": DuckieTownHistoryEnv,
                               "framework": "torch",
                               "model": {
-                                  # Extra kwargs to be passed to your model's c'tor.
-                                  # "custom_model_config": {
-                                  #     "fcnet_hiddens": [512, 512, 512, 256, ],
-                                  #     "fcnet_activation": "relu",
-                                  # },
                                   "custom_model": VisionNetwork,
                               },
                               "num_workers": 3,
@@ -173,7 +178,7 @@ if __name__ == '__main__':
                               "lr": 1e-3,  # tune.grid_search([1e-2, 1e-4, 1e-6]),
                               "train_batch_size": 2000,
                               "rollout_fragment_length": 400,
-                              "sgd_minibatch_size": tune.grid_search([32, 64, 128]),
+                              "sgd_minibatch_size": 128,
                               "num_sgd_iter": 10,
                               "clip_param": 0.1,
                               "grad_clip": .5,
@@ -183,7 +188,9 @@ if __name__ == '__main__':
                           "time_total_s": 60 * 60 * 8  # 10 hours
                       },
                       # resources_per_trial={"cpu": 1}
-                      num_samples=2,
+                      num_samples=3,
                       checkpoint_freq=50,  # iterations
                       checkpoint_at_end=True,
                       )
+
+

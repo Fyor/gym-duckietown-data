@@ -23,7 +23,7 @@ class VisionNetwork(TorchModelV2, nn.Module):
         nn.Module.__init__(self)
 
         # MUST be named "cnn_base" to load weights from VAE pretraining
-        self.cnn_base = nn.Sequential(  # input shape (4, 96, 96)
+        self._hidden_layers = nn.Sequential(  # input shape (4, 96, 96)
             nn.Conv2d(obs_space.shape[0], 8, kernel_size=4, stride=2),
             nn.ReLU(),  # activation
             nn.Conv2d(8, 16, kernel_size=3, stride=2),  # (8, 47, 47)
@@ -47,10 +47,10 @@ class VisionNetwork(TorchModelV2, nn.Module):
             nn.Linear(256, 100), nn.ReLU(), nn.Linear(100, 1)
         )
 
-        print("LOADING PRETRAINED WEIGHTS")
-
-        self.load_cnn_base_state_dict("/home/twiggers/xtma_racecar_2/pytorch_car_caring/ppo_net_params_zigzag.pkl")
-        print()
+        # print("LOADING PRETRAINED WEIGHTS")
+        #
+        # self.load_cnn_base_state_dict("/home/twiggers/xtma_racecar_2/pytorch_car_caring/ppo_net_params_zigzag.pkl")
+        # print()
 
     def load_cnn_base_state_dict(self, path):
         use_cuda = torch.cuda.is_available()
@@ -73,7 +73,7 @@ class VisionNetwork(TorchModelV2, nn.Module):
 
         x = input_dict["obs"]
 
-        self._features = self.cnn_base(x).view(-1, 256)
+        self._features = self._hidden_layers(x).view(-1, 256)
 
         logits = self._logits(self._features)
 
