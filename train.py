@@ -103,20 +103,7 @@ class DtRewardWrapper(gym.RewardWrapper):
         return reward
 
 
-class DtRewardWrapper2(gym.RewardWrapper):
-    """ REALLY BAD """
-    def __init__(self, env):
-        super().__init__(env)
-
-    def reward(self, reward):
-        if reward < -100:
-            reward = -100
-
-        return reward
-
-DUCKIETOWN = True
-
-action_shape = (2,) if DUCKIETOWN else (3,)
+action_shape = (2,)
 transition = np.dtype(
     [('s', np.float64, (args.img_stack, 96, 96)), ('a', np.float64, action_shape), ('a_logp', np.float64),
      ('r', np.float64), ('s_', np.float64, (args.img_stack, 96, 96))])
@@ -178,19 +165,11 @@ class DuckietownHistoryEnvNormal():
         for i in range(self.action_repeat):
             img_rgb, reward, done, info = self.env.step(action)
 
-
-
             total_reward += reward
             self.punishment += info.get("dist_punish", 0)
 
             if done:
                 break
-
-        # speed_sign = 1
-        # if all(action < 0):
-        #     speed_sign = -1
-        # total_reward += info["Simulator"]["robot_speed"]
-        # total_reward += 10 * np.sum(action)
 
         self.score += total_reward
 
@@ -209,7 +188,7 @@ class DuckietownHistoryEnvNormal():
 
     @staticmethod
     def rgb2gray(rgb, norm=True):
-        # rgb image -> gray [0, 1]
+        # rgb image to gray float [0, 1]
         gray = np.dot(rgb[..., :], [0.299, 0.587, 0.114])
         if norm:
             # normalize
@@ -261,37 +240,6 @@ class Net(nn.Module):
         self.beta_head = nn.Sequential(nn.Linear(100, out), nn.Softplus())
         self.apply(self._weights_init)
 
-        # self.i = 0
-        # self.latent_spaces = np.zeros((5, 256))
-
-        # print("LOADING PRETRAINED WEIGHTS")
-        # path = "/home/twiggers/xtma_racecar_2/pytorch_car_caring/ppo_net_params_zigzag.pkl"
-        # if os.getlogin() == "thomas":  # on laptop
-        #     path = "ppo_net_params_zigzag.pkl"
-        # self.load_cnn_base_state_dict(path)
-
-    def load_cnn_base_state_dict(self, path):
-        state_dict = torch.load(path, map_location=device)
-        own_state = self.state_dict()
-        i = 0
-        for name, param in state_dict.items():
-            if name not in own_state:
-                continue
-
-            if "cnn_base" not in name:
-                print("Skipping", name)
-                continue
-
-            if isinstance(param, torch.nn.Parameter):
-                # backwards compatibility for serialized parameters
-                param = param.data
-            print("loaded weigths for", name)
-            i += 1
-            own_state[name].copy_(param)
-
-        if i == 0:
-            print("Own model:", own_state.keys())
-            raise ValueError(f"No weights were loaded from {state_dict.keys()}")
 
     @staticmethod
     def _weights_init(m):
@@ -302,14 +250,6 @@ class Net(nn.Module):
     def forward(self, x):
         x = self.cnn_base(x)
         x = x.view(-1, 256)
-
-        # self.latent_spaces[self.i % len(self.latent_spaces)] = x
-        # self.i+= 1
-        # if self.i>5:
-        #     variance = np.var(self.latent_spaces, axis=0)
-        #     variance_sum = np.sum(variance)
-        #     print("Variance sum", variance_sum)
-
         v = self.v(x)
         x = self.fc(x)
         alpha = self.alpha_head(x) + 1
@@ -358,9 +298,8 @@ class Agent():
             self.best_reward = last_reward
             torch.save(self.net.state_dict(), f'param/ppo_net_params_{args.name}.pkl')
 
-    def load_param(self):
-        # self.net.load_state_dict(torch.load(f'param/ppo_net_params_base.pkl'))
-        self.net.load_state_dict(torch.load(f'param/checkpoint.pkl'))
+    def load_param(self, file):
+        self.net.load_state_dict(torch.load(file))
 
     def store(self, transition):
         self.buffer[self.counter] = transition
@@ -406,48 +345,19 @@ class Agent():
                 nn.utils.clip_grad_norm_(self.net.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
-
-class DeathLogger:
-    def __init__(self, writer):
-        self.death_counter = defaultdict(int, {"invalid-pose": 0, "max-steps-reached": 0})
-        self.writer = writer
-
-    def log(self, info, i_ep):
-        ### done_code options
-        # invalid-pose
-        # max-steps-reached
-        # in-progress
-        # stuck
-
-        reason = info['Simulator']['done_code']
-        if reason == "in-progress":
-            raise ValueError("Simulator is done but gave no reason", info)
-        self.death_counter[reason] += 1
-
-        if i_ep % args.log_interval == 0:
-            for cause, count in self.death_counter.items():
-                writer.add_scalar(f"Deaths/{cause}", count / args.log_interval, i_ep)
-                self.death_counter[cause] = 0
-
-
 if __name__ == "__main__":
-    # Next training changes:
-    # Gradient norm clipping
-
-    # todo https://www.reddit.com/r/reinforcementlearning/comments/7s8px9/deep_reinforcement_learning_practical_tips/
-    # weight clipping
-    # logvalue.clamp(-np.log(1e-5), np.log(1e-5))
-    # Advantage normalisation
     agent = Agent()
 
     if args.checkpoint:
-        print("Using pretrained weights")
-        agent.load_param()
+        checkpoint = f'param/checkpoint.pkl'
+        print("Using pretrained weights", checkpoint)
+        agent.load_param(checkpoint)
 
     env = DuckietownHistoryEnvNormal(args.maps)
 
     writer = get_tensorboard(args)
 
+    # Write graph to tensorboard
     # s = torch.tensor(env.reset(), dtype=torch.double).to(device).unsqueeze(0)
     # writer.add_graph(agent.net, input_to_model=s, verbose=True)
     # writer.flush()
@@ -471,15 +381,12 @@ if __name__ == "__main__":
         for t in range(args.episode_length):
             action_, a_logp = agent.select_action(state)
             action = action_
-            # action = action * np.array([1, 2.]) + np.array([0, -1])
             action = action * 2 - 1
-            # action *= args.speed_discount
 
-            # action[0] = max(action[0], .1) # fixed velocity
-            action[0] = max(.5 - np.abs(action[1]), .1)
+            # action[0] = max(action[0], .1)  # fixed velocity
+            action[0] = max(.5 - np.abs(action[1]), .1)  # Speed up when going straight
 
             action = velangle_to_lrpower(action)
-
 
             state_, reward, done, info = env.step(action)
             if args.render:
@@ -493,8 +400,6 @@ if __name__ == "__main__":
             state = state_
             if done:
                 break
-        else:
-            info['Simulator']['done_code'] = "max-steps-reached"
 
         running_score = running_score * 0.99 + score * 0.01
         reward_dist[0, i_ep % args.log_interval] = reward
@@ -507,13 +412,10 @@ if __name__ == "__main__":
             writer.add_scalar('Reward/reward', running_score, i_ep)
             writer.add_scalar('Reward/reward_score', score, i_ep)
             writer.add_scalar('Reward/reward_recent_mean', np.mean(reward_dist), i_ep)
-            writer.add_scalar('Timesteps/timesteps2', float(np.mean(timesteps_counter)), i_ep)
+            writer.add_scalar('Timesteps/timesteps', float(np.mean(timesteps_counter)), i_ep)
 
-            writer.add_histogram('Timesteps/timesteps', timesteps_counter, i_ep)
+            writer.add_histogram('Timesteps/timesteps_dist', timesteps_counter, i_ep)
             writer.add_histogram('Reward/reward_dist', reward_dist, i_ep)
-            # only add actions which arent zero, in case
-            # dirs = action_history[:, 1]
-            # writer.add_histogram('Actions/last_actions_dist_vel', dirs[dirs != 0], i_ep)
 
             agent.save_param(running_score)
         if running_score > env.reward_threshold:

@@ -27,6 +27,7 @@ torch.manual_seed(args.seed)
 if use_cuda:
     torch.cuda.manual_seed(args.seed)
 
+
 class Agent():
     """
     Agent for testing
@@ -45,28 +46,22 @@ class Agent():
         return action
 
     def load_param(self, file):
-        # self.net.load_state_dict(torch.load('param/checkpoint.pkl', map_location=device))
-        # self.net.load_state_dict(torch.load('param/ppo_net_params_zigzag_fast_0.25.pkl', map_location=device)) # 0.3 speed
-        # file = file or 'param/ppo_net_params_check_straight_no_l2.pkl'
         self.net.load_state_dict(torch.load(file, map_location=device))
-DUCKIETOWN = True
 
-# "loop_empty  small_loop_cw  small_loop  straight_road   udem1  zigzag_dists"
+
 if __name__ == "__main__":
     table = []
-    # for agent_weights, agent_speed in [('param/ppo_net_params_zigzag_fast_0.25.pkl', 0.25)]: #[ ('param/checkpoint.pkl', 0.05)]: # ('param/ppo_net_params_check_straight_no_l2.pkl', 0.2), ('param/ppo_net_params_zigzag_fast_0.25.pkl', 0.3),
-    for agent_weights, agent_speed in [('param/ppo_net_params_Cdir_slower_no_speed_reward_lowlr.pkl', 0.25)]: #[ ('param/checkpoint.pkl', 0.05)]: # ('param/ppo_net_params_check_straight_no_l2.pkl', 0.2), ('param/ppo_net_params_zigzag_fast_0.25.pkl', 0.3),
-        for map_name in ["zigzag_dists","straight_road", "udem1","small_loop", "loop_empty"]:
+    for agent_weights in ['param/checkpoint.pkl', ]:
+        for map_name in ["zigzag_dists", "straight_road", "udem1", "small_loop", "loop_empty"]:
 
 
             agent = Agent()
-            print("LOADING WEIGHTS")
+            print("Loading weigths", agent_weights)
             agent.load_param(file=agent_weights)
-            # env = DuckietownHistoryEnvNormal(maps=["zigzag_dists", "small_loop", "loop_empty"], action_repeat=8)
-            seed = np.random.randint(0,100)
-            print("seed", seed)
-            env = DuckietownHistoryEnvNormal(maps=[map_name], action_repeat=8, seed=seed)
 
+            seed = np.random.randint(0, 100)
+            print("Seed", seed)
+            env = DuckietownHistoryEnvNormal(maps=[map_name], action_repeat=8, seed=seed)
 
             training_records = []
             running_score = 0
@@ -76,6 +71,7 @@ if __name__ == "__main__":
             deaths_after_20 = 0
             good = 0
             ts = []
+            speed = []
 
             for i_ep in trange(500):
                 score = 0
@@ -84,36 +80,26 @@ if __name__ == "__main__":
                 try:
                     for t in range(500):
                         action = agent.select_action(state)
-                        # action = action * np.array([1, 2.]) + np.array([0, -1])
                         action = action * 2 - 1
-                        # action = action*.5/(np.sum(np.abs(action)) + 1e-8)
-                        # action *= 8
-                        # state_, reward, done, info = env.step(action)
 
-                        # veldir
-                        # action *= 1.2
-                        print("action", action)
-                        # action[0] = max(action[0], 0.1)
+                        # action[0] = max(action[0], .1)  # fixed velocity
+                        action[0] = max(.5 - np.abs(action[1]), .1)  # Speed up when going straight
 
-                        # action[1] = np.clip(action[1] * 2, -1, 1)
-                        action[0] = max(.5 - np.abs(action[1]), .1) #max(action[0], 0.1)
-                        # action = [0,0]
                         action = velangle_to_lrpower(action)
-                        # exec
                         state_, reward, done, info = env.step(action)
 
-                        # print(reward)
-                        # print("speed",(info["Simulator"]["robot_speed"] * 20 )**2)
-                        # print(info)
-
+                        # get lane distance
                         sim = env.env
                         lp = sim.get_lane_pos2(sim.cur_pos, sim.cur_angle)
                         d = np.abs(lp.dist)
                         lane_dist.append(d)
-                        #
+
+                        speed.append(sim.speed)
+
                         if args.render:
                             env.render()
                             # time.sleep(1/40)
+
                         score += reward
                         state = state_
                         if done:
@@ -134,14 +120,15 @@ if __name__ == "__main__":
                 except gym_duckietown.simulator.NotInLane as e:
                     print(e)
 
-
                 print(env.env.map_name, f'Ep {i_ep}\tScore: {score:.2f}\tLen:{t}')
 
             d = lane_dist
 
-            print("Map", map_name, agent_weights, agent_speed)
-            print(f"DATA: map deaths mean var & {map_name} & {deaths_after_20} & {(np.mean(d) * 100) / 0.585:.1f} \\%  & {(np.std(d)* 100) / 0.585:.1f} \\% \\ \\    Tile size 0.585")
-            table.append(f" {agent_weights} & {agent_speed*1.4:.4f}m/s & {map_name} & {deaths_after_20}/100 & {(np.mean(d) * 100) / 0.585:.1f} \\%  & {(np.std(d)* 100) / 0.585:.1f} \\% \\\\ ")
+            print("Map", map_name, agent_weights)
+            print(
+                f"DATA: map deaths mean var & {map_name} & {deaths_after_20} & {(np.mean(d) * 100) / 0.585:.1f} \\%  & {(np.std(d) * 100) / 0.585:.1f} \\% \\ \\    Tile size 0.585")
+            table.append(
+                f" {agent_weights} & {np.mean(speed):.4f}m/s avg & {map_name} & {deaths_after_20}/100 & {(np.mean(d) * 100) / 0.585:.1f} \\%  & {(np.std(d) * 100) / 0.585:.1f} \\% \\\\ ")
             print(f" (Total deaths including sub20 steps {deaths}) mean steps before death {np.mean(ts)}")
             print()
 
