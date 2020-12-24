@@ -27,4 +27,4 @@ Typical training perfomance from scratch is shown in red.
 
 
 ## AI-DO
-The ```challenge-aido_LF-template-ppo``` folder contains a submission format for the AI-DO challenge.
+The ```aido-template-ppo``` folder contains a submission format for the AI-DO challenge.
