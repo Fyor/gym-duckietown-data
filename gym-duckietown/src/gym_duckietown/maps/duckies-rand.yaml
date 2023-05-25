@@ -1,0 +1,209 @@
+objects:
+- height: 0.06
+  kind: duckie
+  pos:
+  - 3.57
+  - 4.98
+  rotate: 142
+- height: 0.06
+  kind: duckie
+  pos:
+  - 3.69
+  - 3.8
+  rotate: 104
+- height: 0.06
+  kind: duckie
+  pos:
+  - 6.68
+  - 0.29
+  rotate: 256
+- height: 0.06
+  kind: duckie
+  pos:
+  - 6.34
+  - 2.71
+  rotate: 329
+- height: 0.06
+  kind: duckie
+  pos:
+  - 3.95
+  - 5.4
+  rotate: 178
+- height: 0.06
+  kind: duckie
+  pos:
+  - 0.64
+  - 1.99
+  rotate: 6
+- height: 0.06
+  kind: duckie
+  pos:
+  - 6.16
+  - 1.03
+  rotate: 73
+- height: 0.06
+  kind: duckie
+  pos:
+  - 5.22
+  - 5.54
+  rotate: 50
+- height: 0.06
+  kind: duckie
+  pos:
+  - 1.48
+  - 5.61
+  rotate: 5
+- height: 0.06
+  kind: duckie
+  pos:
+  - 1.2
+  - 0.42
+  rotate: 98
+- height: 0.06
+  kind: duckie
+  pos:
+  - 4.76
+  - 1.13
+  rotate: 92
+- height: 0.06
+  kind: duckie
+  pos:
+  - 0.46
+  - 4.45
+  rotate: 30
+- height: 0.06
+  kind: duckie
+  pos:
+  - 4.78
+  - 4.6
+  rotate: 283
+- height: 0.06
+  kind: duckie
+  pos:
+  - 6.47
+  - 6.59
+  rotate: 185
+- height: 0.06
+  kind: duckie
+  pos:
+  - 5.09
+  - 1.65
+  rotate: 3
+- height: 0.06
+  kind: duckie
+  pos:
+  - 1.36
+  - 0.35
+  rotate: 262
+- height: 0.06
+  kind: duckie
+  pos:
+  - 5.57
+  - 2.9
+  rotate: 266
+- height: 0.06
+  kind: duckie
+  pos:
+  - 2.44
+  - 0.5
+  rotate: 17
+- height: 0.06
+  kind: duckie
+  pos:
+  - 2.4
+  - 6.54
+  rotate: 119
+- height: 0.06
+  kind: duckie
+  pos:
+  - 6.07
+  - 3.67
+  rotate: 343
+- height: 0.06
+  kind: duckie
+  pos:
+  - 4.64
+  - 3.16
+  rotate: 328
+- height: 0.06
+  kind: duckie
+  pos:
+  - 2.08
+  - 2.4
+  rotate: 336
+- height: 0.06
+  kind: duckie
+  pos:
+  - 5.96
+  - 2.72
+  rotate: 77
+- height: 0.06
+  kind: duckie
+  pos:
+  - 0.26
+  - 2.54
+  rotate: 162
+- height: 0.06
+  kind: duckie
+  pos:
+  - 4.71
+  - 4.39
+  rotate: 182
+tile_size: 0.585
+tiles:
+- - floor
+  - floor
+  - floor
+  - floor
+  - floor
+  - floor
+  - floor
+  - floor
+- - floor
+  - curve_left/W
+  - straight/W
+  - straight/W
+  - straight/W
+  - straight/W
+  - curve_left/N
+  - floor
+- - floor
+  - straight/S
+  - floor
+  - floor
+  - floor
+  - floor
+  - straight/N
+  - floor
+- - floor
+  - straight/S
+  - floor
+  - floor
+  - floor
+  - floor
+  - straight/N
+  - floor
+- - floor
+  - straight/S
+  - floor
+  - floor
+  - curve_right/N
+  - straight/E
+  - curve_left/E
+  - floor
+- - floor
+  - curve_left/S
+  - straight/E
+  - straight/E
+  - curve_left/E
+  - floor
+  - floor
+  - floor
+- - floor
+  - floor
+  - floor
+  - floor
+  - floor
+  - floor
+  - floor
+  - floor
