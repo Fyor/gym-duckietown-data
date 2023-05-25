@@ -88,7 +88,6 @@ dependencies:
   - termcolor=1.1.0=py36_1
   - tk=8.6.8=hbc83047_0
   - torchfile=0.1.0=py_0
-  - torchvision=0.2.2=py_3
   - tornado=6.0.4=py36h8c4c3a4_1
   - urllib3=1.25.8=py36h9f0ad1d_1
   - visdom=0.1.8.9=0
@@ -103,6 +102,7 @@ dependencies:
   - zlib=1.2.11=h7b6447c_3
   - zstd=1.3.7=h0b5b093_0
   - pip:
+    - torchvision==0.2.2
     - atari-py==0.2.6
     - attrs==19.3.0
     - backcall==0.2.0
@@ -159,8 +159,8 @@ dependencies:
     - pybase64==1.0.2
     - pycontracts==1.8.12
     - pycontracts3==3.0.2
-    - pygeometry==1.5.7
-    - pygeometry-z6==2.0.5
+    - pygeometry==1.5.6
+    - pygeometry-z6==2.1.4
     - pyglet==1.5.0
     - pygments==2.6.1
     - pyopengl==3.1.0
@@ -193,5 +193,5 @@ dependencies:
     - zipp==3.1.0
     - zuper-commons-z6==6.1.5
     - zuper-typing-z6==6.1.8
-prefix: /home/thomas/anaconda3/envs/gym-duckietown
+prefix: /home/fyorkg/anaconda3/envs/gym-duckietown
 
