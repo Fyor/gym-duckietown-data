@@ -3,6 +3,8 @@ import time
 
 import numpy as np
 
+# import duckie
+
 import gym
 import torch
 import torch.nn as nn
@@ -52,7 +54,8 @@ class Agent():
 if __name__ == "__main__":
     table = []
     for agent_weights in ['param/checkpoint.pkl', ]:
-        for map_name in ["zigzag_dists", "straight_road", "udem1", "small_loop", "loop_empty"]:
+        # for map_name in ["zigzag_dists", "straight_road", "udem1", "small_loop", "loop_empty"]:
+        for map_name in ["duckies-rand"]:
 
 
             agent = Agent()

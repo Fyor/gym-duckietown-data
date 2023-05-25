@@ -6,6 +6,8 @@ from collections import defaultdict
 import cv2
 import numpy as np
 
+from PIL import Image
+
 import gym
 import torch
 import torch.nn as nn
@@ -122,14 +124,15 @@ class DuckietownHistoryEnvNormal():
             seed=seed,  # random seed
             map_name=maps[0],
             max_steps=500001,  # we don't want the gym to reset itself
-            domain_rand=rand,
+            # domain_rand=rand,
+            domain_rand=False,
             # camera_width=96, DONE IN GRAY TO FIX BUG
             # camera_height=96,
             accept_start_angle_deg=10,  # start close to straight
-            full_transparency=True,
+            full_transparency=False,
             randomize_maps_on_reset=len(maps) > 1,
             # camera_FOV_y=108
-            distortion=True,
+            distortion=False,
         )
         self.action_repeat = action_repeat
         # log the type of enviroment the experiment is running on
@@ -150,7 +153,11 @@ class DuckietownHistoryEnvNormal():
         self.score = 0
         self.punishment = 0
 
+        self.iter = 0
+
     def reset(self):
+        # self.iter = 0
+
         self.counter = 0
         self.av_r = self.reward_memory()
 
@@ -165,6 +172,13 @@ class DuckietownHistoryEnvNormal():
         for i in range(self.action_repeat):
             img_rgb, reward, done, info = self.env.step(action)
 
+            # if i == 0:
+# 
+                # if self.iter % 5 == 0:
+                    # image = Image.fromarray(np.uint8(img_rgb))
+                    # image.save(f"imgs/test{self.iter // 5}.jpg")
+
+
             total_reward += reward
             self.punishment += info.get("dist_punish", 0)
 
@@ -176,6 +190,8 @@ class DuckietownHistoryEnvNormal():
         if done:
             print("Reward", self.score, "punishment", self.punishment)
             self.score = self.punishment = 0
+
+        self.iter+= 1
 
         img_gray = self.rgb2gray(img_rgb)
         self.stack.pop(0)
